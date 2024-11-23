@@ -1,119 +1,56 @@
-import { WebSocket, WebSocketServer } from 'ws';
-import { createServer } from 'http';
-import { parse } from 'url';
+import express from 'express';
+import cors from 'cors';
+import { DocumentWebSocketServer } from './websocket';
 import dotenv from 'dotenv';
-import type { WebSocketClient } from '@/types/websocket';
 
 dotenv.config();
 
-export class DocumentWebSocketServer {
-  private wss: WebSocketServer;
-  private server: ReturnType<typeof createServer>;
-  private clients: Map<string, Set<WebSocketClient>>;
-  private heartbeatInterval: NodeJS.Timeout | null = null;
+const app = express();
+const PORT = process.env.PORT || 8081;
 
-  constructor() {
-    this.server = createServer();
-    this.wss = new WebSocketServer({ server: this.server });
-    this.clients = new Map();
-    this.init();
-  }
+// Add CORS and health check endpoints
+app.use(cors({
+  origin: [
+    'http://localhost:3000',
+    'https://real-time-text-editor-amber.vercel.app',
+    'https://real-time-text-editor-git-bug-cee6e5-johanns-projects-6ef4f9e7.vercel.app'
+  ],
+  methods: ['GET', 'POST', 'OPTIONS'],
+  credentials: true
+}));
 
-  private heartbeat(client: WebSocketClient) {
-    client.isAlive = true;
-  }
+// Health check endpoint for Railway
+app.get('/health', (_, res) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString()
+  });
+});
 
-  private init() {
-    this.wss.on('connection', async (ws: WebSocket, req) => {
-      const wsClient = ws as WebSocketClient;
-      const { query } = parse(req.url || '', true);
-      const documentId = query.documentId as string;
-      const userId = query.userId as string;
+// Metrics endpoint
+app.get('/metrics', (_, res) => {
+  res.json({
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    timestamp: new Date().toISOString()
+  });
+});
 
-      if (!documentId || !userId) {
-        wsClient.close();
-        return;
-      }
+// Initialize WebSocket server
+const wss = new DocumentWebSocketServer(Number(PORT));
 
-      // Initialize client
-      wsClient.isAlive = true;
-      wsClient.userId = userId;
-      wsClient.documentId = documentId;
+// Start HTTP server
+app.listen(PORT, () => {
+  console.log(`HTTP server running on port ${PORT}`);
+  console.log(`WebSocket server running on port ${PORT}`);
+});
 
-      // Add client to document room
-      if (!this.clients.has(documentId)) {
-        this.clients.set(documentId, new Set());
-      }
-      this.clients.get(documentId)?.add(wsClient);
+// Handle graceful shutdown
+const shutdown = () => {
+  console.log('Shutting down servers...');
+  wss.close();
+  process.exit(0);
+};
 
-      // Handle heartbeat
-      wsClient.on('pong', () => this.heartbeat(wsClient));
-
-      // Handle messages
-      wsClient.on('message', (data: string) => {
-        try {
-          const message = JSON.parse(data);
-          
-          // Broadcast to all clients in the same document
-          const documentClients = this.clients.get(documentId);
-          if (documentClients) {
-            documentClients.forEach(client => {
-              if (client !== wsClient && client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify(message));
-              }
-            });
-          }
-        } catch (error) {
-          console.error('Error handling message:', error);
-        }
-      });
-
-      // Handle client disconnect
-      wsClient.on('close', () => {
-        const documentClients = this.clients.get(documentId);
-        if (documentClients) {
-          documentClients.delete(wsClient);
-          if (documentClients.size === 0) {
-            this.clients.delete(documentId);
-          }
-        }
-      });
-    });
-
-    // Setup heartbeat interval
-    this.heartbeatInterval = setInterval(() => {
-      this.wss.clients.forEach((ws) => {
-        const wsClient = ws as WebSocketClient;
-        if (!wsClient.isAlive) {
-          return wsClient.terminate();
-        }
-        wsClient.isAlive = false;
-        wsClient.ping();
-      });
-    }, 30000);
-
-    this.wss.on('close', () => {
-      if (this.heartbeatInterval) {
-        clearInterval(this.heartbeatInterval);
-        this.heartbeatInterval = null;
-      }
-    });
-  }
-
-  public listen(port: number) {
-    this.server.listen(port, () => {
-      console.log(`WebSocket server is running on port ${port}`);
-    });
-  }
-
-  public close() {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
-    this.wss.close();
-    this.server.close();
-  }
-}
-
-export default DocumentWebSocketServer; 
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown); 
