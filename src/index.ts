@@ -7,14 +7,15 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8081;
+const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS?.split(',') || [
+  'http://localhost:3000',
+  'https://real-time-text-editor-amber.vercel.app',
+  'https://real-time-text-editor-git-bug-cee6e5-johanns-projects-6ef4f9e7.vercel.app'
+];
 
 // Add CORS and health check endpoints
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'https://real-time-text-editor-amber.vercel.app',
-    'https://real-time-text-editor-git-bug-cee6e5-johanns-projects-6ef4f9e7.vercel.app'
-  ],
+  origin: ALLOWED_ORIGINS,
   methods: ['GET', 'POST', 'OPTIONS'],
   credentials: true
 }));
@@ -40,7 +41,7 @@ app.get('/metrics', (_, res) => {
 const wss = new DocumentWebSocketServer(Number(PORT));
 
 // Start HTTP server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`HTTP server running on port ${PORT}`);
   console.log(`WebSocket server running on port ${PORT}`);
 });
@@ -48,12 +49,15 @@ app.listen(PORT, () => {
 // Handle graceful shutdown
 const shutdown = () => {
   console.log('Shutting down servers...');
-  wss.close();
-  process.exit(0);
+  server.close(() => {
+    console.log('HTTP server closed');
+    wss.close();
+    console.log('WebSocket server closed');
+    process.exit(0);
+  });
 };
 
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
-// Export the DocumentWebSocketServer class
 export { DocumentWebSocketServer }; 
