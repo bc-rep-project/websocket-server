@@ -5,12 +5,11 @@ WORKDIR /app
 # Copy package files first
 COPY package*.json ./
 
-# Install dependencies with legacy-peer-deps flag
-RUN npm install --legacy-peer-deps
+# Install dependencies including devDependencies for build
+RUN npm install
 
 # Copy source code and config files
-COPY src/ ./src/
-COPY tsconfig.json ./
+COPY . .
 
 # Build TypeScript
 RUN npm run build

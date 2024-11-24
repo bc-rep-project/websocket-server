@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "dist/index.js",
   "scripts": {
-    "build": "rimraf dist && tsc -p tsconfig.json",
+    "build": "rimraf dist && tsc",
     "start": "node dist/index.js",
     "dev": "ts-node-dev --respawn src/index.ts",
     "clean": "rimraf dist",
