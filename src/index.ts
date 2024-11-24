@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { DocumentWebSocketServer } from './websocket';
+import { WebSocketServer, WebSocket } from 'ws';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -37,13 +37,29 @@ app.get('/metrics', (_, res) => {
   });
 });
 
-// Initialize WebSocket server
-const wss = new DocumentWebSocketServer(Number(PORT));
-
 // Start HTTP server
 const server = app.listen(PORT, () => {
   console.log(`HTTP server running on port ${PORT}`);
-  console.log(`WebSocket server running on port ${PORT}`);
+});
+
+// Initialize WebSocket server
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', (ws) => {
+  console.log('Client connected');
+
+  ws.on('message', (message) => {
+    // Broadcast to all clients
+    wss.clients.forEach((client) => {
+      if (client !== ws && client.readyState === WebSocket.OPEN) {
+        client.send(message.toString());
+      }
+    });
+  });
+
+  ws.on('close', () => {
+    console.log('Client disconnected');
+  });
 });
 
 // Handle graceful shutdown
@@ -51,13 +67,12 @@ const shutdown = () => {
   console.log('Shutting down servers...');
   server.close(() => {
     console.log('HTTP server closed');
-    wss.close();
-    console.log('WebSocket server closed');
-    process.exit(0);
+    wss.close(() => {
+      console.log('WebSocket server closed');
+      process.exit(0);
+    });
   });
 };
 
 process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
-
-export { DocumentWebSocketServer }; 
+process.on('SIGINT', shutdown); 

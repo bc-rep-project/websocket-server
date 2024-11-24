@@ -3,11 +3,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.DocumentWebSocketServer = void 0;
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
-const websocket_1 = require("./websocket");
-Object.defineProperty(exports, "DocumentWebSocketServer", { enumerable: true, get: function () { return websocket_1.DocumentWebSocketServer; } });
+const ws_1 = require("ws");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
@@ -38,21 +36,35 @@ app.get('/metrics', (_, res) => {
         timestamp: new Date().toISOString()
     });
 });
-// Initialize WebSocket server
-const wss = new websocket_1.DocumentWebSocketServer(Number(PORT));
 // Start HTTP server
 const server = app.listen(PORT, () => {
     console.log(`HTTP server running on port ${PORT}`);
-    console.log(`WebSocket server running on port ${PORT}`);
+});
+// Initialize WebSocket server
+const wss = new ws_1.WebSocketServer({ server });
+wss.on('connection', (ws) => {
+    console.log('Client connected');
+    ws.on('message', (message) => {
+        // Broadcast to all clients
+        wss.clients.forEach((client) => {
+            if (client !== ws && client.readyState === ws_1.WebSocketServer.OPEN) {
+                client.send(message.toString());
+            }
+        });
+    });
+    ws.on('close', () => {
+        console.log('Client disconnected');
+    });
 });
 // Handle graceful shutdown
 const shutdown = () => {
     console.log('Shutting down servers...');
     server.close(() => {
         console.log('HTTP server closed');
-        wss.close();
-        console.log('WebSocket server closed');
-        process.exit(0);
+        wss.close(() => {
+            console.log('WebSocket server closed');
+            process.exit(0);
+        });
     });
 };
 process.on('SIGTERM', shutdown);
