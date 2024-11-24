@@ -2,15 +2,14 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Copy package files first
+# Copy package files
 COPY package*.json ./
 
-# Install dependencies with legacy-peer-deps flag
-RUN npm install --legacy-peer-deps
+# Install dependencies
+RUN npm install
 
 # Copy source code and config files
-COPY src/ ./src/
-COPY tsconfig.json ./
+COPY . .
 
 # Build TypeScript
 RUN npm run build
@@ -22,4 +21,4 @@ RUN npm prune --production
 EXPOSE 8081
 
 # Start command
-CMD ["npm", "start"] 
+CMD ["node", "dist/index.js"] 
