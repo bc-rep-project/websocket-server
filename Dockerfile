@@ -2,20 +2,21 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-# Install dependencies including TypeScript globally
-RUN npm install -g typescript
-
-# Copy package files
+# Copy package files first
 COPY package*.json ./
 
-# Install all dependencies (including devDependencies)
-RUN npm install --include=dev
+# Install dependencies with legacy-peer-deps flag
+RUN npm install --legacy-peer-deps
 
-# Copy source code
-COPY . .
+# Copy source code and config files
+COPY src/ ./src/
+COPY tsconfig.json ./
 
 # Build TypeScript
 RUN npm run build
+
+# Remove dev dependencies
+RUN npm prune --production
 
 # Expose port
 EXPOSE 8081
