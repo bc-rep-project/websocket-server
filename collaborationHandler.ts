@@ -1,5 +1,5 @@
 import { WebSocket } from 'ws';
-import { prisma } from '@/lib/prisma';
+import { adminDb } from '@/lib/firebase-admin';
 import { sendEmail, emailTemplates } from '@/lib/emailService';
 
 interface CollaborationMessage {
@@ -157,15 +157,14 @@ class CollaborationHandler {
     documentId: string,
     requiredRole: string
   ) {
-    const collaborator = await prisma.documentCollaborator.findFirst({
-      where: {
-        userId,
-        documentId,
-        role: requiredRole,
-      },
-    });
+    const collaboratorsRef = adminDb.collection('documentCollaborators');
+    const collaboratorQuery = await collaboratorsRef
+      .where('documentId', '==', documentId)
+      .where('userId', '==', userId)
+      .where('role', '==', requiredRole)
+      .get();
 
-    return !!collaborator;
+    return !collaboratorQuery.empty;
   }
 
   private async updatePermissions(data: {
@@ -173,26 +172,26 @@ class CollaborationHandler {
     documentId: string;
     role: string;
   }) {
-    await prisma.documentCollaborator.update({
-      where: {
-        documentId_userId: {
-          documentId: data.documentId,
-          userId: data.userId,
-        },
-      },
-      data: {
+    const collaboratorsRef = adminDb.collection('documentCollaborators');
+    const collaboratorQuery = await collaboratorsRef
+      .where('documentId', '==', data.documentId)
+      .where('userId', '==', data.userId)
+      .get();
+
+    if (!collaboratorQuery.empty) {
+      await collaboratorQuery.docs[0].ref.update({
         role: data.role,
-      },
-    });
+        updatedAt: new Date().toISOString(),
+      });
+    }
 
     // Log the permission change
-    await prisma.accessLog.create({
-      data: {
-        documentId: data.documentId,
-        action: 'modified',
-        performedBy: data.userId,
-        details: `Changed role to ${data.role}`,
-      },
+    await adminDb.collection('accessLogs').add({
+      documentId: data.documentId,
+      action: 'modified',
+      performedBy: data.userId,
+      details: `Changed role to ${data.role}`,
+      timestamp: new Date().toISOString(),
     });
   }
 
@@ -202,67 +201,60 @@ class CollaborationHandler {
   ) {
     try {
       // Get document details
-      const document = await prisma.document.findUnique({
-        where: { id: data.documentId },
-        select: { title: true },
-      });
-
-      if (!document) {
+      const documentRef = adminDb.collection('documents').doc(data.documentId);
+      const documentDoc = await documentRef.get();
+      if (!documentDoc.exists) {
         console.error('Document not found:', data.documentId);
         return;
       }
+      const document = documentDoc.data();
 
       // Get requester details
-      const requester = await prisma.user.findUnique({
-        where: { id: client.userId },
-        select: { name: true, email: true },
-      });
-
-      if (!requester) {
+      const userRef = adminDb.collection('users').doc(client.userId);
+      const userDoc = await userRef.get();
+      if (!userDoc.exists) {
         console.error('Requester not found:', client.userId);
         return;
       }
+      const requester = userDoc.data();
 
       // Find document admins
-      const admins = await prisma.documentCollaborator.findMany({
-        where: {
-          documentId: data.documentId,
-          role: 'admin',
-        },
-        include: {
-          user: {
-            select: {
-              email: true,
-            },
-          },
-        },
-      });
+      const collaboratorsRef = adminDb.collection('documentCollaborators');
+      const adminsQuery = await collaboratorsRef
+        .where('documentId', '==', data.documentId)
+        .where('role', '==', 'admin')
+        .get();
 
       // Send email notifications to admins
-      for (const admin of admins) {
-        const { subject, text, html } = emailTemplates.accessRequest(
-          admin.user.email,
-          requester.name || requester.email,
-          document.title,
-          data.requestedRole
-        );
+      for (const adminDoc of adminsQuery.docs) {
+        const adminData = adminDoc.data();
+        const adminUserDoc = await adminDb.collection('users').doc(adminData.userId).get();
+        const adminUser = adminUserDoc.data();
 
-        await sendEmail({
-          to: admin.user.email,
-          subject,
-          text,
-          html,
-        });
+        if (adminUser?.email) {
+          const { subject, text, html } = emailTemplates.accessRequest(
+            adminUser.email,
+            requester?.name || requester?.email || 'A user',
+            document?.title || 'the document',
+            data.requestedRole
+          );
+
+          await sendEmail({
+            to: adminUser.email,
+            subject,
+            text,
+            html,
+          });
+        }
       }
 
       // Log the access request
-      await prisma.accessLog.create({
-        data: {
-          documentId: data.documentId,
-          action: 'requested',
-          performedBy: client.userId,
-          details: `Requested ${data.requestedRole} access`,
-        },
+      await adminDb.collection('accessLogs').add({
+        documentId: data.documentId,
+        action: 'requested',
+        performedBy: client.userId,
+        details: `Requested ${data.requestedRole} access`,
+        timestamp: new Date().toISOString(),
       });
     } catch (error) {
       console.error('Error handling access request:', error);
